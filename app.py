@@ -13,13 +13,13 @@ class SummarizerTxt:
     def summarize(self, text):
         if not text.strip():
             return "Please enter some text to summarize."
-            
+
         sentences = text.split(". ")
         chunks = []
         current_chunk = ""
 
         for sentence in sentences:
-            if len(self.tokenizer(current_chunk + sentence)["input_ids"]) < self.chunk_size:
+            if len(self.tokenizer(current_chunk + sentence)["input_ids"]) <= self.chunk_size:
                 current_chunk += sentence + ". "
             else:
                 chunks.append(current_chunk.strip())
@@ -41,7 +41,7 @@ class SummarizerTxt:
             summary_ids = self.model.generate(
                 **inputs,
                 num_beams=4,
-                max_length=100,
+                max_length=150,
                 early_stopping=True
             )
             summaries.append(self.tokenizer.decode(summary_ids[0], skip_special_tokens=True))
@@ -51,12 +51,13 @@ class SummarizerTxt:
 summarizer = SummarizerTxt()
 
 def summarize_text(input_text):
+
     return summarizer.summarize(input_text)
 
 iface = gr.Interface(
     fn=summarize_text,
     inputs=gr.Textbox(
-        label="Input Text", 
+        label="Input Text",
         placeholder="Enter text to summarize...",
         lines=5
     ),
@@ -72,4 +73,4 @@ iface = gr.Interface(
     ]
 )
 
-iface.launch()
+iface.launch(debug=True)
