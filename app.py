@@ -1,6 +1,8 @@
 from transformers import PegasusForConditionalGeneration, PegasusTokenizer
 import torch
 import gradio as gr
+from time import time
+import re
 
 class SummarizerTxt:
     def __init__(self):
@@ -9,24 +11,47 @@ class SummarizerTxt:
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model = PegasusForConditionalGeneration.from_pretrained(model_name).to(self.device)
         self.chunk_size = 512
+        self.max_length = 256
+
+    def split_into_sentences(self, text):
+        sentences = re.split(r'(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?|\!)\s', text)
+        return [s.strip() for s in sentences if s.strip()]
+
+    def chunk_text(self, text):
+        if not text.strip():
+            return []
+
+        sentences = self.split_into_sentences(text)
+        chunks = []
+        current_chunk = []
+        current_length = 0
+
+        for sentence in sentences:
+            sentence_tokens = self.tokenizer(sentence, return_tensors="pt", truncation=False)["input_ids"][0]
+            sentence_length = len(sentence_tokens)
+            
+            if current_length + sentence_length <= self.chunk_size:
+                current_chunk.append(sentence)
+                current_length += sentence_length
+            else:
+                if current_chunk:
+                    chunks.append(" ".join(current_chunk))
+                current_chunk = [sentence]
+                current_length = sentence_length
+        
+        if current_chunk:
+            chunks.append(" ".join(current_chunk))
+            
+        return chunks
 
     def summarize(self, text):
         if not text.strip():
             return "Please enter some text to summarize."
 
-        sentences = text.split(". ")
-        chunks = []
-        current_chunk = ""
-
-        for sentence in sentences:
-            if len(self.tokenizer(current_chunk + sentence)["input_ids"]) <= self.chunk_size:
-                current_chunk += sentence + ". "
-            else:
-                chunks.append(current_chunk.strip())
-                current_chunk = sentence + ". "
-
-        if current_chunk:
-            chunks.append(current_chunk.strip())
+        chunks = self.chunk_text(text)
+        
+        if not chunks:
+            return "Text is too short to summarize."
 
         summaries = []
         for chunk in chunks:
@@ -39,21 +64,29 @@ class SummarizerTxt:
             ).to(self.device)
 
             summary_ids = self.model.generate(
-                **inputs,
+                inputs.input_ids,
+                attention_mask=inputs.attention_mask,
                 num_beams=4,
-                max_length=150,
-                early_stopping=True
+                max_length=self.max_length,
+                min_length=32,
+                early_stopping=True,
+                length_penalty=1.0,
+                no_repeat_ngram_size=3
             )
-            summaries.append(self.tokenizer.decode(summary_ids[0], skip_special_tokens=True))
+            summary = self.tokenizer.decode(summary_ids[0], skip_special_tokens=True)
+            summaries.append(summary)
 
         return " ".join(summaries)
 
 summarizer = SummarizerTxt()
 
 def summarize_text(input_text):
-
-    return summarizer.summarize(input_text)
-
+    start = time()
+    result = summarizer.summarize(input_text)
+    end = time()
+    time_taken = end - start
+    return result, f"{time_taken:.0f} seconds"
+    
 iface = gr.Interface(
     fn=summarize_text,
     inputs=gr.Textbox(
@@ -61,10 +94,11 @@ iface = gr.Interface(
         placeholder="Enter text to summarize...",
         lines=5
     ),
-    outputs=gr.Textbox(
-        label="Summary",
-        lines=3
-    ),
+    outputs=[
+        gr.Textbox(label="Summary", lines=3),
+        gr.Textbox(label="Time taken",
+            placeholder="time...")
+    ],
     title="Text Summarizer",
     description="Summarize long texts using Google's Pegasus model",
     examples=[
@@ -73,4 +107,5 @@ iface = gr.Interface(
     ]
 )
 
-iface.launch(debug=True)
+if __name__ == "__main__":
+    iface.launch(debug=True)
